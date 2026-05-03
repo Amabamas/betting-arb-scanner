@@ -1,0 +1,632 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>arb-scanner — live arbitrage dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ["Inter", "ui-sans-serif", "system-ui"],
+                        mono: ["JetBrains Mono", "ui-monospace", "Menlo"],
+                    },
+                    colors: {
+                        ink: {
+                            50: "#f4f6fb",
+                            900: "#0a0d14",
+                            950: "#070910",
+                        },
+                        glass: "rgba(255,255,255,0.04)",
+                    },
+                },
+            },
+        };
+    </script>
+    <style>
+        :root {
+            color-scheme: dark;
+        }
+        html,
+        body {
+            background: radial-gradient(circle at 0% 0%, #112030 0%, #07090e 60%);
+            min-height: 100vh;
+            font-family: "Inter", system-ui, sans-serif;
+            color: #e6e9ef;
+        }
+        .glass {
+            background: rgba(255, 255, 255, 0.04);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+        .row-card {
+            transition: transform 0.12s ease, background 0.12s ease;
+        }
+        .row-card:hover {
+            background: rgba(255, 255, 255, 0.05);
+            transform: translateX(2px);
+        }
+        .roi-bar {
+            position: relative;
+            overflow: hidden;
+        }
+        .roi-bar::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            width: var(--roi-pct, 0%);
+            background: linear-gradient(90deg, rgba(34, 197, 94, 0.18), rgba(34, 197, 94, 0));
+            pointer-events: none;
+        }
+        .pulse-dot {
+            animation: pulse 1.6s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 0.4;
+                transform: scale(0.85);
+            }
+        }
+        .scrollbar-thin::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        .scrollbar-thin::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+        }
+        .scrollbar-thin::-webkit-scrollbar-track {
+            background: transparent;
+        }
+    </style>
+</head>
+<body x-data="dashboard()" x-init="init()" class="antialiased">
+    <!-- ─── Top bar ─────────────────────────────────────────────────────────── -->
+    <header class="sticky top-0 z-40 glass">
+        <div class="max-w-[1500px] mx-auto px-6 py-3 flex items-center gap-4">
+            <div class="flex items-center gap-2">
+                <span
+                    class="w-2.5 h-2.5 rounded-full"
+                    :class="state?.ready ? 'bg-emerald-400 pulse-dot' : 'bg-amber-400'"
+                ></span>
+                <h1 class="text-base font-semibold tracking-tight">arb-scanner</h1>
+                <span class="text-xs text-white/40 font-mono">v0.1</span>
+            </div>
+            <div class="hidden md:flex flex-1 items-center gap-6 text-xs text-white/50">
+                <span>
+                    <span class="text-white/30">markets</span>
+                    <span class="text-white/90 font-mono ml-1" x-text="state?.total_markets ?? '—'"></span>
+                </span>
+                <span>
+                    <span class="text-white/30">groups</span>
+                    <span class="text-white/90 font-mono ml-1" x-text="state?.total_groups ?? '—'"></span>
+                </span>
+                <span>
+                    <span class="text-white/30">opps</span>
+                    <span class="text-white/90 font-mono ml-1" x-text="state?.opps?.length ?? '—'"></span>
+                </span>
+                <span>
+                    <span class="text-white/30">last scan</span>
+                    <span class="text-white/90 font-mono ml-1" x-text="lastScanLabel()"></span>
+                </span>
+                <span x-show="state?.elapsed_s">
+                    <span class="text-white/30">elapsed</span>
+                    <span
+                        class="text-white/90 font-mono ml-1"
+                        x-text="state?.elapsed_s ? state.elapsed_s.toFixed(1) + 's' : ''"
+                    ></span>
+                </span>
+            </div>
+            <div class="ml-auto flex items-center gap-2">
+                <button
+                    @click="refresh()"
+                    :disabled="loading"
+                    class="px-3 py-1.5 rounded-md text-xs glass hover:bg-white/10 transition disabled:opacity-50"
+                >
+                    <span x-show="!loading">↻ refresh</span>
+                    <span x-show="loading">…</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-[1500px] mx-auto px-4 lg:px-6 py-6 grid grid-cols-12 gap-6">
+        <!-- ─── Sidebar filters ─────────────────────────────────────────────── -->
+        <aside class="col-span-12 lg:col-span-3 space-y-4">
+            <!-- Adapter health -->
+            <div class="glass rounded-xl p-4">
+                <h2 class="text-xs uppercase tracking-wider text-white/40 mb-3">Adapters</h2>
+                <ul class="space-y-1.5">
+                    <template x-for="a in state?.per_adapter ?? []" :key="a.venue">
+                        <li class="flex items-center justify-between text-sm">
+                            <span class="flex items-center gap-2">
+                                <span
+                                    class="w-1.5 h-1.5 rounded-full"
+                                    :class="adapterDot(a)"
+                                ></span>
+                                <span class="font-mono" x-text="a.venue"></span>
+                            </span>
+                            <span class="text-white/50 font-mono text-xs" x-text="a.count + ' / ' + a.elapsed_s + 's'"></span>
+                        </li>
+                    </template>
+                    <li
+                        x-show="!state?.per_adapter?.length"
+                        class="text-xs text-white/40 italic"
+                    >
+                        waiting for first scan…
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Filters -->
+            <div class="glass rounded-xl p-4 space-y-4">
+                <h2 class="text-xs uppercase tracking-wider text-white/40">Filters</h2>
+
+                <!-- Search -->
+                <label class="block">
+                    <span class="text-xs text-white/50">search event</span>
+                    <input
+                        type="text"
+                        x-model="filters.search"
+                        placeholder="bond / arsenal / 2028…"
+                        class="mt-1 w-full bg-black/30 border border-white/10 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:border-emerald-400/50"
+                    />
+                </label>
+
+                <!-- Min ROI -->
+                <label class="block">
+                    <div class="flex items-baseline justify-between text-xs">
+                        <span class="text-white/50">min ROI</span>
+                        <span class="text-emerald-300 font-mono" x-text="filters.minRoi.toFixed(1) + '%'"></span>
+                    </div>
+                    <input
+                        type="range"
+                        min="0"
+                        max="20"
+                        step="0.1"
+                        x-model.number="filters.minRoi"
+                        class="mt-1 w-full accent-emerald-400"
+                    />
+                </label>
+
+                <!-- Max ROI (filters out stale 80%+ stuff) -->
+                <label class="block">
+                    <div class="flex items-baseline justify-between text-xs">
+                        <span class="text-white/50">max ROI</span>
+                        <span class="text-amber-300 font-mono" x-text="filters.maxRoi.toFixed(0) + '%'"></span>
+                    </div>
+                    <input
+                        type="range"
+                        min="1"
+                        max="100"
+                        step="1"
+                        x-model.number="filters.maxRoi"
+                        class="mt-1 w-full accent-amber-400"
+                    />
+                    <p class="text-[10px] text-white/30 mt-0.5">
+                        cap to hide stale-quote phantom arbs
+                    </p>
+                </label>
+
+                <!-- Top N -->
+                <label class="block">
+                    <span class="text-xs text-white/50">show top</span>
+                    <select
+                        x-model.number="filters.topN"
+                        class="mt-1 w-full bg-black/30 border border-white/10 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:border-emerald-400/50"
+                    >
+                        <template x-for="n in [10, 25, 50, 100, 9999]" :key="n">
+                            <option :value="n" x-text="n === 9999 ? 'all' : n"></option>
+                        </template>
+                    </select>
+                </label>
+
+                <!-- Domain -->
+                <fieldset>
+                    <legend class="text-xs text-white/50 mb-1.5">domain</legend>
+                    <div class="flex gap-1.5 flex-wrap">
+                        <template x-for="d in ['prediction', 'sport']" :key="d">
+                            <label class="cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    :value="d"
+                                    x-model="filters.domains"
+                                    class="peer sr-only"
+                                />
+                                <span
+                                    class="text-xs px-2.5 py-1 rounded-full glass peer-checked:bg-emerald-400/15 peer-checked:text-emerald-200 peer-checked:border-emerald-400/40 transition"
+                                    x-text="d"
+                                ></span>
+                            </label>
+                        </template>
+                    </div>
+                </fieldset>
+
+                <!-- Venues -->
+                <fieldset x-show="venueOptions.length">
+                    <legend class="text-xs text-white/50 mb-1.5">venues</legend>
+                    <div class="flex gap-1.5 flex-wrap">
+                        <template x-for="v in venueOptions" :key="v">
+                            <label class="cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    :value="v"
+                                    x-model="filters.venues"
+                                    class="peer sr-only"
+                                />
+                                <span
+                                    class="text-xs px-2.5 py-1 rounded-full glass peer-checked:bg-cyan-400/15 peer-checked:text-cyan-200 peer-checked:border-cyan-400/40 transition"
+                                    x-text="v"
+                                ></span>
+                            </label>
+                        </template>
+                    </div>
+                </fieldset>
+
+                <button
+                    @click="resetFilters()"
+                    class="w-full text-xs text-white/40 hover:text-white/80 transition"
+                >
+                    reset filters
+                </button>
+            </div>
+
+            <!-- Sort -->
+            <div class="glass rounded-xl p-4">
+                <h2 class="text-xs uppercase tracking-wider text-white/40 mb-3">Sort by</h2>
+                <div class="grid grid-cols-2 gap-1.5">
+                    <template
+                        x-for="s in [
+                            { key: 'roi', label: 'ROI' },
+                            { key: 'payout', label: 'payout' },
+                            { key: 'liquidity_usd', label: 'liquidity' },
+                            { key: 'start_time', label: 'starts' },
+                        ]"
+                        :key="s.key"
+                    >
+                        <button
+                            @click="setSort(s.key)"
+                            :class="sortKey === s.key ? 'bg-white/10 text-white' : 'text-white/50 hover:text-white'"
+                            class="px-2 py-1.5 text-xs rounded-md glass transition flex items-center justify-between"
+                        >
+                            <span x-text="s.label"></span>
+                            <span
+                                x-show="sortKey === s.key"
+                                x-text="sortDir === 'desc' ? '↓' : '↑'"
+                                class="font-mono"
+                            ></span>
+                        </button>
+                    </template>
+                </div>
+            </div>
+        </aside>
+
+        <!-- ─── Opportunities table ─────────────────────────────────────────── -->
+        <section class="col-span-12 lg:col-span-9">
+            <!-- Status banners -->
+            <div
+                x-show="state?.last_error"
+                class="mb-4 px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-200 text-sm"
+            >
+                <span class="font-medium">scanner error:</span>
+                <span x-text="state?.last_error" class="font-mono text-xs"></span>
+            </div>
+
+            <div
+                x-show="!state?.opps?.length && state?.ready"
+                class="glass rounded-xl p-12 text-center text-white/50"
+            >
+                <p class="text-lg">no arbitrage opportunities right now</p>
+                <p class="text-xs text-white/30 mt-2" x-text="state?.last_error ?? 'lower the min ROI or check that more than one venue is enabled'"></p>
+            </div>
+
+            <div x-show="!state?.ready" class="glass rounded-xl p-12 text-center text-white/50">
+                <p class="text-lg">waiting for first scan…</p>
+                <p class="text-xs text-white/30 mt-2">
+                    fetching markets from
+                    <span x-text="(state?.settings?.scanner_venues || 'all venues')"></span>
+                </p>
+            </div>
+
+            <!-- Table header -->
+            <div
+                x-show="filteredOpps.length"
+                class="grid grid-cols-[80px_60px_1fr_120px_180px_180px_90px_90px] gap-3 px-4 py-2 text-[11px] uppercase tracking-wider text-white/30"
+            >
+                <div>ROI</div>
+                <div>dom</div>
+                <div>event</div>
+                <div>starts</div>
+                <div>side A</div>
+                <div>side B</div>
+                <div class="text-right">payout</div>
+                <div class="text-right">liq</div>
+            </div>
+
+            <!-- Rows -->
+            <div class="space-y-1">
+                <template x-for="(o, idx) in filteredOpps" :key="idx + ':' + o.title_a + ':' + o.title_b">
+                    <article
+                        class="row-card glass rounded-xl px-4 py-3 grid grid-cols-[80px_60px_1fr_120px_180px_180px_90px_90px] gap-3 items-center text-sm roi-bar"
+                        :style="`--roi-pct: ${Math.min(100, o.roi * 1000)}%`"
+                    >
+                        <!-- ROI -->
+                        <div>
+                            <span
+                                class="font-mono font-semibold"
+                                :class="roiColor(o.roi)"
+                                x-text="(o.roi * 100).toFixed(2) + '%'"
+                            ></span>
+                        </div>
+
+                        <!-- Domain -->
+                        <div>
+                            <span
+                                class="text-[10px] uppercase font-medium px-1.5 py-0.5 rounded"
+                                :class="o.domain === 'prediction' ? 'bg-violet-500/15 text-violet-200' : 'bg-emerald-500/15 text-emerald-200'"
+                                x-text="o.domain === 'prediction' ? 'pred' : 'sport'"
+                            ></span>
+                        </div>
+
+                        <!-- Event title -->
+                        <div class="min-w-0">
+                            <p class="truncate text-white/90" x-text="o.title_a"></p>
+                            <p
+                                x-show="o.title_a.toLowerCase() !== o.title_b.toLowerCase()"
+                                class="truncate text-white/40 text-xs mt-0.5"
+                                x-text="'↳ ' + o.title_b"
+                            ></p>
+                        </div>
+
+                        <!-- Start time -->
+                        <div class="text-xs text-white/50 font-mono" x-text="formatStart(o.start_time)"></div>
+
+                        <!-- Side A -->
+                        <div>
+                            <a
+                                :href="o.url_a || '#'"
+                                target="_blank"
+                                rel="noopener"
+                                class="block hover:text-cyan-300 transition"
+                                :class="o.url_a ? 'cursor-pointer' : 'cursor-default pointer-events-none'"
+                            >
+                                <div class="text-xs font-mono" x-text="o.venue_a"></div>
+                                <div class="text-xs">
+                                    <span :class="sideColor(o.side_a)" x-text="o.side_a"></span>
+                                    <span class="text-white/60"> @ </span>
+                                    <span class="font-mono" x-text="o.odds_a.toFixed(3)"></span>
+                                </div>
+                                <div class="text-[10px] text-white/40 font-mono">
+                                    stake $<span x-text="o.stake_a.toFixed(2)"></span>
+                                </div>
+                            </a>
+                        </div>
+
+                        <!-- Side B -->
+                        <div>
+                            <a
+                                :href="o.url_b || '#'"
+                                target="_blank"
+                                rel="noopener"
+                                class="block hover:text-cyan-300 transition"
+                                :class="o.url_b ? 'cursor-pointer' : 'cursor-default pointer-events-none'"
+                            >
+                                <div class="text-xs font-mono" x-text="o.venue_b"></div>
+                                <div class="text-xs">
+                                    <span :class="sideColor(o.side_b)" x-text="o.side_b"></span>
+                                    <span class="text-white/60"> @ </span>
+                                    <span class="font-mono" x-text="o.odds_b.toFixed(3)"></span>
+                                </div>
+                                <div class="text-[10px] text-white/40 font-mono">
+                                    stake $<span x-text="o.stake_b.toFixed(2)"></span>
+                                </div>
+                            </a>
+                        </div>
+
+                        <!-- Payout -->
+                        <div class="text-right">
+                            <div class="font-mono text-emerald-300" x-text="'$' + o.payout.toFixed(2)"></div>
+                            <div class="text-[10px] text-white/40">on $100</div>
+                        </div>
+
+                        <!-- Liquidity -->
+                        <div class="text-right">
+                            <div
+                                class="font-mono"
+                                :class="o.liquidity_usd > 1000 ? 'text-white/80' : 'text-amber-300'"
+                                x-text="o.liquidity_usd > 0 ? '$' + formatLiq(o.liquidity_usd) : '—'"
+                            ></div>
+                        </div>
+                    </article>
+                </template>
+            </div>
+
+            <!-- Footer count -->
+            <div
+                x-show="state?.opps?.length"
+                class="mt-3 px-4 py-2 text-xs text-white/30 flex justify-between"
+            >
+                <span>
+                    showing <span class="text-white/60 font-mono" x-text="filteredOpps.length"></span>
+                    of <span class="text-white/60 font-mono" x-text="state?.opps?.length"></span>
+                </span>
+                <span x-show="filtersActive()" class="text-cyan-300">filters active</span>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        function dashboard() {
+            return {
+                state: null,
+                loading: false,
+                lastError: null,
+                refreshTimer: null,
+                pollInterval: 5000,
+                filters: {
+                    search: "",
+                    minRoi: 0.5,
+                    maxRoi: 100,
+                    topN: 50,
+                    domains: ["prediction", "sport"],
+                    venues: [],
+                },
+                sortKey: "roi",
+                sortDir: "desc",
+
+                async init() {
+                    await this.refresh();
+                    this.refreshTimer = setInterval(() => this.refresh(), this.pollInterval);
+                },
+
+                async refresh() {
+                    this.loading = true;
+                    try {
+                        const r = await fetch("/api/scan");
+                        const data = await r.json();
+                        this.state = data;
+                        // Initialise venues filter to all venues seen on first load.
+                        if (!this.filters.venues.length && data.per_adapter?.length) {
+                            this.filters.venues = data.per_adapter
+                                .filter((a) => a.count > 0)
+                                .map((a) => a.venue);
+                        }
+                    } catch (e) {
+                        this.lastError = e.message;
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                resetFilters() {
+                    this.filters.search = "";
+                    this.filters.minRoi = 0.5;
+                    this.filters.maxRoi = 100;
+                    this.filters.topN = 50;
+                    this.filters.domains = ["prediction", "sport"];
+                    this.filters.venues = (this.state?.per_adapter ?? [])
+                        .filter((a) => a.count > 0)
+                        .map((a) => a.venue);
+                },
+
+                filtersActive() {
+                    return (
+                        this.filters.search !== "" ||
+                        this.filters.minRoi > 0.5 ||
+                        this.filters.maxRoi < 100 ||
+                        this.filters.topN < 9999 ||
+                        this.filters.domains.length < 2
+                    );
+                },
+
+                setSort(key) {
+                    if (this.sortKey === key) {
+                        this.sortDir = this.sortDir === "desc" ? "asc" : "desc";
+                    } else {
+                        this.sortKey = key;
+                        this.sortDir = "desc";
+                    }
+                },
+
+                get venueOptions() {
+                    return [...new Set((this.state?.per_adapter ?? []).map((a) => a.venue))];
+                },
+
+                get filteredOpps() {
+                    let arr = [...(this.state?.opps ?? [])];
+                    const s = this.filters.search.trim().toLowerCase();
+                    if (s) {
+                        arr = arr.filter(
+                            (o) =>
+                                o.title_a.toLowerCase().includes(s) ||
+                                o.title_b.toLowerCase().includes(s)
+                        );
+                    }
+                    arr = arr.filter((o) => o.roi * 100 >= this.filters.minRoi);
+                    arr = arr.filter((o) => o.roi * 100 <= this.filters.maxRoi);
+                    arr = arr.filter((o) => this.filters.domains.includes(o.domain));
+                    if (this.filters.venues.length) {
+                        arr = arr.filter(
+                            (o) =>
+                                this.filters.venues.includes(o.venue_a) ||
+                                this.filters.venues.includes(o.venue_b)
+                        );
+                    }
+                    const dir = this.sortDir === "desc" ? -1 : 1;
+                    const k = this.sortKey;
+                    arr.sort((a, b) => {
+                        let av = a[k];
+                        let bv = b[k];
+                        if (k === "start_time") {
+                            av = av ? new Date(av).getTime() : 0;
+                            bv = bv ? new Date(bv).getTime() : 0;
+                        }
+                        if (av == null) av = -Infinity;
+                        if (bv == null) bv = -Infinity;
+                        return av < bv ? -dir : av > bv ? dir : 0;
+                    });
+                    return arr.slice(0, this.filters.topN);
+                },
+
+                lastScanLabel() {
+                    const ts = this.state?.last_finished_at;
+                    if (!ts) return "—";
+                    const ago = Math.max(0, (Date.now() - new Date(ts).getTime()) / 1000);
+                    if (ago < 60) return ago.toFixed(0) + "s ago";
+                    return new Date(ts).toLocaleTimeString();
+                },
+
+                roiColor(roi) {
+                    if (roi >= 0.1) return "text-amber-300";
+                    if (roi >= 0.05) return "text-yellow-300";
+                    if (roi >= 0.02) return "text-emerald-300";
+                    if (roi >= 0.01) return "text-cyan-300";
+                    return "text-cyan-400/70";
+                },
+
+                sideColor(name) {
+                    const n = (name || "").toLowerCase();
+                    if (n === "yes") return "text-emerald-300";
+                    if (n === "no") return "text-rose-300";
+                    return "text-white/80";
+                },
+
+                adapterDot(a) {
+                    if (a.error) return "bg-rose-400";
+                    if (a.count === 0) return "bg-amber-400";
+                    return "bg-emerald-400";
+                },
+
+                formatStart(iso) {
+                    if (!iso) return "—";
+                    const d = new Date(iso);
+                    if (Number.isNaN(d.getTime())) return "—";
+                    return d.toISOString().slice(0, 10) + " " + d.toISOString().slice(11, 16);
+                },
+
+                formatLiq(v) {
+                    if (v >= 1e6) return (v / 1e6).toFixed(1) + "M";
+                    if (v >= 1e3) return (v / 1e3).toFixed(1) + "k";
+                    return v.toFixed(0);
+                },
+            };
+        }
+    </script>
+</body>
+</html>

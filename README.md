@@ -38,11 +38,35 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-arb-scan --once         # run a single scan and print
-arb-scan                # run forever (poll every SCANNER_INTERVAL_S)
-arb-scan --min-roi 0.01 # only show >=1% ROI
+arb-scan --once          # run a single scan and print
+arb-scan                 # run forever (poll every SCANNER_INTERVAL_S)
+arb-scan --min-roi 0.01  # only show >=1% ROI
 arb-scan --venues polymarket,kalshi,limitless --domain prediction
+arb-scan --serve --port 8000   # web dashboard at http://127.0.0.1:8000
 ```
+
+### Web dashboard
+
+`arb-scan --serve` launches a FastAPI app that runs the scanner in a background
+task and serves a single-page Tailwind + Alpine.js UI at
+`http://127.0.0.1:8000`. The page polls `/api/scan` every 5 s and re-renders
+without reload.
+
+Filters (all client-side, no round trip):
+
+- search by event title (substring, case-insensitive)
+- min ROI slider (0–20 %)
+- max ROI slider (1–100 %, useful to hide stale-quote phantoms like 89 %)
+- show top N (10 / 25 / 50 / 100 / all)
+- domain checkboxes (prediction / sport)
+- venue checkboxes (auto-populated from active adapters)
+- sort by ROI / payout / liquidity / start time, click again to flip direction
+
+Each row links the side-A and side-B legs to the original event pages on the
+respective venues, so you can jump straight to placing the trade.
+
+![dashboard screenshot](docs/dashboard.png)
+
 
 ### Verifying Kalshi credentials
 

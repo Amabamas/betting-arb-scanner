@@ -72,7 +72,24 @@ async def scan_once(client: httpx.AsyncClient, settings: Settings) -> ScanResult
         }
         all_markets.extend(ms)
 
-    # Split by domain to keep prediction vs sport groupings independent
+    # The matching pass is CPU-bound (token blocking + rapidfuzz) and on a 25k
+    # Kalshi market catalogue takes 100-150 seconds. Run it in a worker thread
+    # so the asyncio event loop stays responsive for /api/scan polling.
+    opps, groups = await asyncio.to_thread(_match_and_arb, all_markets, settings)
+
+    return ScanResult(
+        opps=opps,
+        per_adapter=per_adapter,
+        total_markets=len(all_markets),
+        total_groups=groups,
+        elapsed_s=time.monotonic() - t0,
+    )
+
+
+def _match_and_arb(
+    all_markets: list[NormalizedMarket], settings: Settings
+) -> tuple[list[ArbOpportunity], int]:
+    """CPU-bound matching + arb pairing. Runs in a thread executor."""
     sport = [m for m in all_markets if m.domain == "sport"]
     pred = [m for m in all_markets if m.domain == "prediction"]
 
@@ -99,12 +116,4 @@ async def scan_once(client: httpx.AsyncClient, settings: Settings) -> ScanResult
         )
 
     opps.sort(key=lambda o: o.roi, reverse=True)
-    opps = opps[: settings.scanner_max_opps]
-
-    return ScanResult(
-        opps=opps,
-        per_adapter=per_adapter,
-        total_markets=len(all_markets),
-        total_groups=len(groups),
-        elapsed_s=time.monotonic() - t0,
-    )
+    return opps[: settings.scanner_max_opps], len(groups)

@@ -28,9 +28,32 @@ def _configure_logging(level: str) -> None:
     )
 
 
+def _apply_overrides(
+    settings,
+    interval: float | None,
+    min_roi: float | None,
+    venues: str | None,
+    domain: str | None,
+) -> None:
+    if interval is not None:
+        settings.scanner_interval_s = interval
+    if min_roi is not None:
+        settings.scanner_min_roi = min_roi
+    if venues is not None:
+        settings.scanner_venues = venues
+    if domain is not None:
+        settings.scanner_domain = domain  # type: ignore[assignment]
+
+
 @app.command()
-def scan(
+def main(
     once: Annotated[bool, typer.Option("--once", help="Run a single scan and exit")] = False,
+    serve: Annotated[
+        bool,
+        typer.Option("--serve", help="Launch the web dashboard instead of the CLI"),
+    ] = False,
+    host: Annotated[str, typer.Option("--host", help="Web bind host")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", help="Web bind port")] = 8000,
     interval: Annotated[
         float | None,
         typer.Option("--interval", help="Override poll interval in seconds"),
@@ -48,18 +71,29 @@ def scan(
         typer.Option("--domain", help="sport | prediction | hybrid"),
     ] = None,
 ) -> None:
-    """Run the scanner. Press Ctrl-C to stop."""
-    settings = load_settings()
-    if interval is not None:
-        settings.scanner_interval_s = interval
-    if min_roi is not None:
-        settings.scanner_min_roi = min_roi
-    if venues is not None:
-        settings.scanner_venues = venues
-    if domain is not None:
-        settings.scanner_domain = domain  # type: ignore[assignment]
+    """Run the scanner. By default keeps polling and printing to the terminal.
 
+    Use ``--serve`` to start the web dashboard instead.
+    """
+    settings = load_settings()
+    _apply_overrides(settings, interval, min_roi, venues, domain)
     _configure_logging(settings.scanner_log_level)
+
+    if serve:
+        import uvicorn
+
+        from .web import create_app
+
+        fastapi_app = create_app(settings)
+        console.print(
+            f"[bold cyan]arb-scanner dashboard[/]: "
+            f"open [link=http://{host}:{port}]http://{host}:{port}[/]"
+        )
+        uvicorn.run(
+            fastapi_app, host=host, port=port, log_level=settings.scanner_log_level.lower()
+        )
+        return
+
     asyncio.run(_run(settings, once=once))
 
 
