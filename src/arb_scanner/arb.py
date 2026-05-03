@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from itertools import combinations
 
+from .matching import title_similarity
 from .models import ArbOpportunity, NormalizedMarket, Outcome
 
 
@@ -145,9 +146,19 @@ def find_arbs_in_group(
     matched_group: list[NormalizedMarket],
     min_roi: float,
     min_liquidity: float,
+    pairwise_title_threshold: int = 85,
 ) -> list[ArbOpportunity]:
-    """All 2-way arbs across markets that the matcher decided refer to the same event."""
+    """All 2-way arbs across markets that the matcher decided refer to the same event.
+
+    The greedy clusterer chains matches transitively (A~B, B~C ⇒ {A, B, C}), so
+    we enforce a stricter pairwise title similarity here before treating any
+    two markets as the same event for arb purposes.
+    """
     opps: list[ArbOpportunity] = []
     for a, b in combinations(matched_group, 2):
+        if a.venue == b.venue:
+            continue
+        if title_similarity(a.title, b.title) < pairwise_title_threshold:
+            continue
         opps.extend(find_arbs_for_pair(a, b, min_roi, min_liquidity))
     return opps
