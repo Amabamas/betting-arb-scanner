@@ -44,6 +44,41 @@ arb-scan --min-roi 0.01 # only show >=1% ROI
 arb-scan --venues polymarket,kalshi,limitless --domain prediction
 ```
 
+### Verifying Kalshi credentials
+
+If `arb-scan` reports `kalshi: 0 markets`, your key id and PEM probably aren't
+being loaded correctly. Run:
+
+```bash
+python scripts/check_kalshi.py
+```
+
+This prints exactly what made it into `KALSHI_API_KEY_ID` /
+`KALSHI_PRIVATE_KEY_PEM`, parses the PEM, and makes a signed call to
+`/exchange/status`. If that check passes, Kalshi will work in `arb-scan`.
+
+The most common cause of failures is the multi-line PEM block confusing
+`python-dotenv`. The bullet-proof format is to paste the PEM as a single line
+with literal `\n` between rows, in double quotes:
+
+```env
+KALSHI_PRIVATE_KEY_PEM="-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIB...\nl5O7myVUkAT2C/...lots of lines.../==\n-----END RSA PRIVATE KEY-----"
+```
+
+### Running from PyCharm / VS Code
+
+In PyCharm:
+
+1. Open the project, right-click `src/arb_scanner/main.py` → **Run 'main'**.
+2. Edit the run configuration:
+   - **Parameters**: `--once --domain prediction --venues polymarket,kalshi --min-roi 0.005`
+   - **Working directory**: the repo root (`betting-arb-scanner`)
+   - **Python interpreter**: the one in `.venv/bin/python`
+3. Make sure the **EnvFile** plugin is enabled, or just keep `.env` in the
+   project root — `pydantic-settings` reads it automatically when launched
+   from the working directory.
+
+
 ## How it works
 
 1. Each adapter fetches its venue's live odds in parallel (`asyncio.gather`).

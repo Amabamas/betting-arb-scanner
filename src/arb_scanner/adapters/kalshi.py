@@ -35,12 +35,33 @@ EVENTS_PATH = "/trade-api/v2/events"
 
 
 def _load_private_key(pem: str) -> rsa.RSAPrivateKey:
+    """Load a PEM-encoded RSA private key tolerantly.
+
+    Accepts:
+      * a real multi-line PEM block (works when .env uses double-quoted
+        multi-line value, or when the var is set directly in the shell)
+      * a single-line value where each newline was escaped as the two
+        characters '\\n' (common when copy-pasting a key into a JSON or .env
+        file via single-line tooling)
+      * a single-line value with all whitespace stripped (we re-fold every
+        64 chars and wrap with BEGIN/END markers as a last-resort)
+      * surrounding single or double quotes (removed)
+    """
+    pem = pem.strip()
+    if (pem.startswith('"') and pem.endswith('"')) or (
+        pem.startswith("'") and pem.endswith("'")
+    ):
+        pem = pem[1:-1]
+    # Convert escaped newlines from .env / JSON-style values back to real ones.
+    if "\\n" in pem and "\n" not in pem:
+        pem = pem.replace("\\n", "\n")
     if "BEGIN" not in pem:
-        # Allow user to paste base64 single-line; reconstruct PEM
+        # Reconstruct PEM from a base64-only blob.
+        body = "".join(pem.split())
         pem = (
-            "-----BEGIN PRIVATE KEY-----\n"
-            + "\n".join(pem[i : i + 64] for i in range(0, len(pem), 64))
-            + "\n-----END PRIVATE KEY-----\n"
+            "-----BEGIN RSA PRIVATE KEY-----\n"
+            + "\n".join(body[i : i + 64] for i in range(0, len(body), 64))
+            + "\n-----END RSA PRIVATE KEY-----\n"
         )
     key = serialization.load_pem_private_key(pem.encode(), password=None)
     if not isinstance(key, rsa.RSAPrivateKey):
