@@ -55,7 +55,7 @@ class CloudbetAdapter(Adapter):
                     "cloudbet returned 403 — region-restricted or key not authorised"
                 )
             r.raise_for_status()
-            data = r.json()
+            data = r.json() or {}
         except RuntimeError:
             raise
         except Exception as e:
@@ -63,7 +63,11 @@ class CloudbetAdapter(Adapter):
             return []
         keys: list[str] = []
         for cat in data.get("categories") or []:
+            if not isinstance(cat, dict):
+                continue
             for comp in cat.get("competitions") or []:
+                if not isinstance(comp, dict):
+                    continue
                 key = comp.get("key")
                 # eventCount can be missing or null on rare new categories — coerce safely
                 event_count = comp.get("eventCount") or 0
@@ -78,11 +82,22 @@ class CloudbetAdapter(Adapter):
                 f"{BASE}/competitions/{comp_key}", headers=self._headers, timeout=15.0
             )
             r.raise_for_status()
-            data = r.json()
+            data = r.json() or {}
         except Exception as e:
             logger.debug("cloudbet competition(%s) error: %s", comp_key, e)
             return out
-        for event in data.get("events", []):
+        # Cloudbet sometimes returns null for `events`, `home`, `away`, `sport`
+        # (when an event lacks one side, was just created, etc). dict.get(key, {})
+        # returns None — not the default — when the key exists with value=None,
+        # so we coerce defensively at every dereference.
+        sport_obj = data.get("sport") or {}
+        if not isinstance(sport_obj, dict):
+            sport_obj = {}
+        sport = sport_obj.get("key") or data.get("sportKey") or ""
+
+        for event in data.get("events") or []:
+            if not isinstance(event, dict):
+                continue
             cutoff = event.get("cutoffTime")
             start_time = None
             if isinstance(cutoff, str):
@@ -95,13 +110,23 @@ class CloudbetAdapter(Adapter):
             if start_time < datetime.now(UTC):
                 continue
 
-            home = event.get("home", {}).get("name") or "Home"
-            away = event.get("away", {}).get("name") or "Away"
+            home_obj = event.get("home") or {}
+            away_obj = event.get("away") or {}
+            if not isinstance(home_obj, dict):
+                home_obj = {}
+            if not isinstance(away_obj, dict):
+                away_obj = {}
+            home = home_obj.get("name") or "Home"
+            away = away_obj.get("name") or "Away"
             title = f"{home} vs {away}"
             event_id = str(event.get("id") or "")
-            sport = data.get("sport", {}).get("key") or data.get("sportKey") or ""
 
-            for market_key, market in (event.get("markets") or {}).items():
+            markets_dict = event.get("markets") or {}
+            if not isinstance(markets_dict, dict):
+                continue
+            for market_key, market in markets_dict.items():
+                if not isinstance(market, dict):
+                    continue
                 # Pull main 1X2 / moneyline markets. Cloudbet keys we care about:
                 #   "{sport}.match_odds" — 3-way 1X2 in soccer/hockey
                 #   "{sport}.moneyline"  — 2-way moneyline in NBA/NFL/MLB
@@ -114,12 +139,18 @@ class CloudbetAdapter(Adapter):
                 ):
                     continue
                 submarkets = market.get("submarkets") or {}
+                if not isinstance(submarkets, dict):
+                    continue
                 main = submarkets.get("period=ft") or next(iter(submarkets.values()), None)
-                if not main:
+                if not isinstance(main, dict):
                     continue
                 selections = main.get("selections") or []
+                if not isinstance(selections, list):
+                    continue
                 outcomes: list[Outcome] = []
                 for sel in selections:
+                    if not isinstance(sel, dict):
+                        continue
                     name = sel.get("outcome") or sel.get("params") or "?"
                     price = sel.get("price")
                     if price is None:
