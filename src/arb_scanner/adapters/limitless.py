@@ -8,7 +8,9 @@ floats already in [0, 1].
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
+from typing import Literal
 
 from ..models import NormalizedMarket, Outcome
 from .base import Adapter
@@ -16,6 +18,56 @@ from .base import Adapter
 logger = logging.getLogger(__name__)
 
 API = "https://api.limitless.exchange"
+
+# Limitless titles with "N+ total {metric}?" mean "N or more {metric}".
+# Translated to standard sportsbook line: Over (N-1).5 {metric}.
+# We surface that as a tag and as a `totals` kind so the matcher does NOT
+# pair them with moneyline markets (3+ goals !=  match_winner).
+_TOTALS_RE = re.compile(
+    r"\b(?P<n>\d+)\+\s*(?:total\s+)?"
+    r"(?P<metric>goals?|corners?|cards?|points?|rebounds?|assists?|"
+    r"strikeouts?|hits?|runs?|threes?|three\s*pointers?|tries|fouls?)\b",
+    re.IGNORECASE,
+)
+# Markets that aren't full-event yes/no — e.g. "Player X to score a goal" — are
+# legitimate Limitless contracts but conflate badly with moneyline markets that
+# share team names. Mark them `kind="other"` so the matcher leaves them alone.
+_PROP_HINTS = (
+    "to score",
+    "first goal",
+    "anytime goalscorer",
+    "anytime scorer",
+    "first to score",
+    "to be sent off",
+    "to assist",
+    "hat-trick",
+    "hat trick",
+)
+# Most Limitless event-level markets read "Team A vs Team B: …?" — those are
+# moneyline-style yes/no. We want them paired only with moneyline markets.
+_MATCH_RE = re.compile(r"\b\w[\w'.\- ]+\s+vs\s+\w[\w'.\- ]+", re.IGNORECASE)
+
+
+def _classify_market(title: str) -> tuple[Literal["binary", "match_winner", "totals", "other"], list[str]]:
+    """Classify a Limitless title.
+
+    Returns (kind, extra_tags). The extra tags carry the parsed "Over X.5"
+    line for totals so a future totals-aware matcher can pair them across
+    venues at the correct line.
+    """
+    low = title.lower()
+    tot = _TOTALS_RE.search(low)
+    if tot:
+        n = int(tot.group("n"))
+        metric = tot.group("metric").lower().rstrip("s")
+        # "3+ goals" wins on >=3 goals → equivalent sportsbook line is Over (n-1).5
+        line = max(0, n - 1) + 0.5
+        return "totals", [f"totals_line:over_{line:g}_{metric}"]
+    if any(h in low for h in _PROP_HINTS):
+        return "other", ["prop"]
+    if _MATCH_RE.search(low):
+        return "match_winner", []
+    return "binary", []
 
 
 def _parse_expiration(value: object) -> datetime | None:
@@ -104,12 +156,16 @@ class LimitlessAdapter(Adapter):
                 slug = m.get("slug") or m.get("stableSlug")
                 url = f"https://limitless.exchange/markets/{slug}" if slug else None
 
+                kind, extra_tags = _classify_market(title)
+                tags = [t for t in (m.get("tags") or []) if isinstance(t, str)]
+                tags.extend(extra_tags)
+
                 markets.append(
                     NormalizedMarket(
                         venue=self.id,
                         venue_market_id=str(m.get("id") or slug or ""),
                         title=title,
-                        kind="binary",
+                        kind=kind,
                         domain="prediction",
                         outcomes=[
                             Outcome(name="Yes", decimal_odds=1.0 / yp),
@@ -117,7 +173,7 @@ class LimitlessAdapter(Adapter):
                         ],
                         start_time=start_time,
                         liquidity_usd=liquidity,
-                        tags=[t for t in (m.get("tags") or []) if isinstance(t, str)],
+                        tags=tags,
                         url=url,
                     )
                 )

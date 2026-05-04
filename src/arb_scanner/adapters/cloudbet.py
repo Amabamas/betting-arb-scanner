@@ -164,6 +164,7 @@ class CloudbetAdapter(Adapter):
             return []
         all_markets: list[NormalizedMarket] = []
         first_error: Exception | None = None
+        sports_with_comps = 0
         for sport in DEFAULT_SPORTS:
             try:
                 comps = await self._competitions(sport)
@@ -171,11 +172,22 @@ class CloudbetAdapter(Adapter):
                 # Auth / region errors propagate from _competitions for visibility.
                 first_error = first_error or e
                 continue
+            if comps:
+                sports_with_comps += 1
             for comp in comps:
                 all_markets.extend(await self._competition_markets(comp))
-        if not all_markets and first_error is not None:
-            # Surface the first sport's error so the dashboard shows a red dot
-            # with a useful message instead of a silent empty result.
-            raise first_error
+        if not all_markets:
+            if first_error is not None:
+                # Surface the first sport's error so the dashboard shows a red dot
+                # with a useful message instead of a silent empty result.
+                raise first_error
+            # Auth succeeded but every sport returned 0 — most often this means
+            # the key is restricted to a subset of products / regions, or there
+            # are no upcoming events matched by our market-key filter.
+            raise RuntimeError(
+                f"cloudbet: 0 markets across {len(DEFAULT_SPORTS)} sports "
+                f"({sports_with_comps} responded) — key may be restricted "
+                "or no upcoming match-winner / moneyline markets right now"
+            )
         logger.info("cloudbet: %d markets", len(all_markets))
         return all_markets

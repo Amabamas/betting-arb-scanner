@@ -372,7 +372,7 @@
             <div class="space-y-1">
                 <template x-for="(o, idx) in filteredOpps" :key="idx + ':' + o.title_a + ':' + o.title_b">
                     <article
-                        class="row-card glass rounded-xl px-4 py-3 grid grid-cols-[80px_60px_1fr_120px_180px_180px_90px_90px] gap-3 items-center text-sm roi-bar"
+                        class="row-card glass rounded-xl px-4 py-3 grid grid-cols-[80px_60px_1fr_120px_180px_180px_90px_90px] gap-3 items-start text-sm roi-bar"
                         :style="`--roi-pct: ${Math.min(100, o.roi * 1000)}%`"
                     >
                         <!-- ROI -->
@@ -393,12 +393,12 @@
                             ></span>
                         </div>
 
-                        <!-- Event title -->
+                        <!-- Event title (full, wraps) -->
                         <div class="min-w-0">
-                            <p class="truncate text-white/90" x-text="o.title_a"></p>
+                            <p class="text-white/90 leading-snug break-words" x-text="o.title_a"></p>
                             <p
                                 x-show="o.title_a.toLowerCase() !== o.title_b.toLowerCase()"
-                                class="truncate text-white/40 text-xs mt-0.5"
+                                class="text-white/40 text-xs mt-0.5 leading-snug break-words"
                                 x-text="'↳ ' + o.title_b"
                             ></p>
                         </div>

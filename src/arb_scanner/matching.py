@@ -190,10 +190,35 @@ def title_similarity(a: str, b: str) -> int:
     return int(min(set_score, sort_score) * 0.6 + max(set_score, sort_score) * 0.4)
 
 
+def _kind_compatible(a: NormalizedMarket, b: NormalizedMarket) -> bool:
+    """Refuse to pair markets whose kinds clearly mean different things.
+
+    `binary` is the default fallback for adapters that don't classify and
+    is permissive (matches anything except totals/other). `totals` only
+    matches `totals` — "Aston Villa vs Tottenham 3+ goals" and the same
+    teams' moneyline are the same event but NOT the same bet, and pairing
+    them produces fake arbs. `other` (props, scorers, etc.) doesn't pair
+    with anything.
+    """
+    ka, kb = a.kind, b.kind
+    if "other" in (ka, kb):
+        return False
+    if ka == "totals" or kb == "totals":
+        return ka == kb
+    if ka == "handicap" or kb == "handicap":
+        return ka == kb
+    # binary / match_winner / futures are interchangeable: match-winner across
+    # a sportsbook (3-way 1X2) and a binary "Will X win?" prediction market are
+    # genuinely the same bet expressed differently.
+    return True
+
+
 def _start_compatible(
     a: NormalizedMarket, b: NormalizedMarket, window: timedelta
 ) -> bool:
     if a.domain != b.domain:
+        return False
+    if not _kind_compatible(a, b):
         return False
     # Prediction markets resolve at arbitrary times across venues (e.g. Kalshi
     # closes at 23:59 UTC the day before, Polymarket at 12:00 UTC the day of)

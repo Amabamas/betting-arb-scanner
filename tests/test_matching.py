@@ -51,3 +51,36 @@ def test_group_prediction_markets_no_time_required() -> None:
     b = _m("kalshi", "Will BTC exceed 200k in 2026?", None, domain="prediction")
     groups = group_markets([a, b], title_threshold=60)
     assert any({m.venue for m in g} == {"polymarket", "kalshi"} for g in groups)
+
+
+def _kindm(venue: str, title: str, kind: str, domain: str = "prediction") -> NormalizedMarket:
+    return NormalizedMarket(
+        venue=venue,
+        venue_market_id=f"{venue}-{title}",
+        title=title,
+        kind=kind,  # type: ignore[arg-type]
+        domain=domain,  # type: ignore[arg-type]
+        outcomes=[
+            Outcome(name="Yes", decimal_odds=2.0),
+            Outcome(name="No", decimal_odds=2.0),
+        ],
+        start_time=None,
+        sport="soccer" if domain == "sport" else None,
+    )
+
+
+def test_totals_market_does_not_match_match_winner() -> None:
+    """Limitless 'X+ goals' (kind=totals) must NOT pair with kalshi moneyline
+    on the same teams (kind=binary/match_winner) — different bets."""
+    a = _kindm("limitless", "Aston Villa vs Tottenham: 3+ total goals?", "totals")
+    b = _kindm("kalshi", "Aston Villa vs Tottenham: Aston Villa wins?", "binary")
+    groups = group_markets([a, b])
+    # Each market must end up in its own group (no cross-venue pairing).
+    assert all(len(g) == 1 for g in groups)
+
+
+def test_prop_market_does_not_match_anything() -> None:
+    a = _kindm("limitless", "Chelsea vs Forest: a substitute to score a goal", "other")
+    b = _kindm("kalshi", "Chelsea vs Forest: Chelsea wins?", "binary")
+    groups = group_markets([a, b])
+    assert all(len(g) == 1 for g in groups)
