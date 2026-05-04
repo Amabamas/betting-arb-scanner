@@ -46,19 +46,25 @@ class PS3838Adapter(Adapter):
         }
 
     async def _leagues(self, sport_id: int) -> list[int]:
-        try:
-            r = await self.client.get(
-                f"{BASE}/leagues",
-                params={"sportId": sport_id},
-                headers=self._headers,
-                timeout=15.0,
+        r = await self.client.get(
+            f"{BASE}/leagues",
+            params={"sportId": sport_id},
+            headers=self._headers,
+            timeout=15.0,
+        )
+        # Auth / permission failures: surface to the adapter status panel
+        # instead of silently returning 0 markets.
+        if r.status_code in (401, 403):
+            raise RuntimeError(
+                f"ps3838 auth failed ({r.status_code}) — check PS3838_USERNAME/PASSWORD"
             )
+        try:
             r.raise_for_status()
             data = r.json()
         except Exception as e:
             logger.debug("ps3838 leagues(%d) error: %s", sport_id, e)
             return []
-        return [int(L["id"]) for L in data.get("leagues", []) if L.get("eventCount", 0) > 0][:25]
+        return [int(L["id"]) for L in data.get("leagues", []) if (L.get("eventCount") or 0) > 0][:25]
 
     async def _fixtures(self, sport_id: int, league_ids: list[int]) -> dict[int, dict]:
         if not league_ids:

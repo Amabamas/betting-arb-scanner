@@ -167,7 +167,7 @@
                 <h2 class="text-xs uppercase tracking-wider text-white/40 mb-3">Adapters</h2>
                 <ul class="space-y-1.5">
                     <template x-for="a in state?.per_adapter ?? []" :key="a.venue">
-                        <li>
+                        <li :class="a.disabled ? 'opacity-50' : ''">
                             <div class="flex items-center justify-between text-sm">
                                 <span class="flex items-center gap-2">
                                     <span
@@ -176,11 +176,20 @@
                                     ></span>
                                     <span class="font-mono" x-text="a.venue"></span>
                                 </span>
-                                <span class="text-white/50 font-mono text-xs" x-text="a.count + ' / ' + a.elapsed_s + 's'"></span>
+                                <span
+                                    x-show="!a.disabled"
+                                    class="text-white/50 font-mono text-xs"
+                                    x-text="a.count + ' / ' + a.elapsed_s + 's'"
+                                ></span>
+                                <span
+                                    x-show="a.disabled"
+                                    class="text-white/40 font-mono text-[10px] uppercase tracking-wider"
+                                >disabled</span>
                             </div>
                             <div
                                 x-show="a.error"
-                                class="ml-3.5 mt-0.5 text-[10px] text-rose-300/80 font-mono break-words"
+                                class="ml-3.5 mt-0.5 text-[10px] font-mono break-words"
+                                :class="a.disabled ? 'text-white/40' : 'text-rose-300/80'"
                                 x-text="a.error"
                             ></div>
                         </li>
@@ -636,6 +645,7 @@
                 },
 
                 adapterDot(a) {
+                    if (a.disabled) return "bg-white/30";
                     if (a.error) return "bg-rose-400";
                     if (a.count === 0) return "bg-amber-400";
                     return "bg-emerald-400";

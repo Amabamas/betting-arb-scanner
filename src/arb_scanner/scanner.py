@@ -17,16 +17,37 @@ from .models import ArbOpportunity, NormalizedMarket
 logger = logging.getLogger(__name__)
 
 
-def _build_adapters(client: httpx.AsyncClient, settings: Settings) -> list[Adapter]:
+def _build_adapters(
+    client: httpx.AsyncClient, settings: Settings
+) -> tuple[list[Adapter], list[tuple[str, str]]]:
+    """Return (active_adapters, disabled_reasons)."""
     adapters: list[Adapter] = []
+    disabled: list[tuple[str, str]] = []
     for cls in ALL_ADAPTERS:
         a = cls(client, settings)
         if not a.domain_enabled():
+            disabled.append((a.id, "domain disabled"))
             continue
-        if not a.is_enabled():
+        if (
+            settings.enabled_venues is not None
+            and a.id not in settings.enabled_venues
+        ):
+            disabled.append((a.id, "not in SCANNER_VENUES"))
+            continue
+        if not a.has_credentials():
+            disabled.append((a.id, _missing_creds_msg(a.id)))
             continue
         adapters.append(a)
-    return adapters
+    return adapters, disabled
+
+
+def _missing_creds_msg(adapter_id: str) -> str:
+    """Human-readable reminder of which env vars are required for a venue."""
+    return {
+        "kalshi": "needs KALSHI_API_KEY_ID + KALSHI_PRIVATE_KEY_PEM",
+        "cloudbet": "needs CLOUDBET_API_KEY",
+        "ps3838": "needs PS3838_USERNAME + PS3838_PASSWORD",
+    }.get(adapter_id, "missing credentials")
 
 
 async def _safe_fetch(adapter: Adapter) -> tuple[str, list[NormalizedMarket], float, str | None]:
@@ -57,18 +78,28 @@ class ScanResult:
 
 async def scan_once(client: httpx.AsyncClient, settings: Settings) -> ScanResult:
     t0 = time.monotonic()
-    adapters = _build_adapters(client, settings)
+    adapters, disabled = _build_adapters(client, settings)
     logger.info("scanning with %d adapters: %s", len(adapters), [a.id for a in adapters])
 
     results = await asyncio.gather(*[_safe_fetch(a) for a in adapters])
 
     all_markets: list[NormalizedMarket] = []
     per_adapter: dict[str, dict[str, object]] = {}
+    # Disabled adapters first, so they show up in the dashboard with a clear
+    # "needs X" reason (instead of silently disappearing).
+    for venue_id, reason in disabled:
+        per_adapter[venue_id] = {
+            "count": 0,
+            "elapsed_s": 0.0,
+            "error": reason,
+            "disabled": True,
+        }
     for venue_id, ms, elapsed, err in results:
         per_adapter[venue_id] = {
             "count": len(ms),
             "elapsed_s": round(elapsed, 2),
             "error": err,
+            "disabled": False,
         }
         all_markets.extend(ms)
 
