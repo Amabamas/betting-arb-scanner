@@ -83,6 +83,19 @@
                 transform: scale(0.85);
             }
         }
+        .new-badge {
+            animation: new-pulse 1.4s ease-in-out infinite;
+            box-shadow: 0 0 8px rgba(244, 63, 94, 0.5);
+        }
+        @keyframes new-pulse {
+            0%,
+            100% {
+                box-shadow: 0 0 6px rgba(244, 63, 94, 0.4);
+            }
+            50% {
+                box-shadow: 0 0 14px rgba(244, 63, 94, 0.85);
+            }
+        }
         .scrollbar-thin::-webkit-scrollbar {
             width: 6px;
             height: 6px;
@@ -370,18 +383,22 @@
 
             <!-- Rows -->
             <div class="space-y-1">
-                <template x-for="(o, idx) in filteredOpps" :key="idx + ':' + o.title_a + ':' + o.title_b">
+                <template x-for="o in filteredOpps" :key="o.arb_id || (o.title_a + ':' + o.title_b)">
                     <article
                         class="row-card glass rounded-xl px-4 py-3 grid grid-cols-[80px_60px_1fr_120px_180px_180px_90px_90px] gap-3 items-start text-sm roi-bar"
                         :style="`--roi-pct: ${Math.min(100, o.roi * 1000)}%`"
                     >
-                        <!-- ROI -->
-                        <div>
+                        <!-- ROI + NEW badge -->
+                        <div class="flex flex-col gap-1 items-start">
                             <span
                                 class="font-mono font-semibold"
                                 :class="roiColor(o.roi)"
                                 x-text="(o.roi * 100).toFixed(2) + '%'"
                             ></span>
+                            <span
+                                x-show="o.is_new"
+                                class="text-[9px] tracking-wider font-semibold px-1.5 py-0.5 rounded uppercase bg-rose-500/90 text-yellow-200 ring-1 ring-rose-300/40 new-badge"
+                            >new</span>
                         </div>
 
                         <!-- Domain -->

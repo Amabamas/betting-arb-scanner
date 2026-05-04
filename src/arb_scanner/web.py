@@ -15,7 +15,7 @@ import asyncio
 import contextlib
 import logging
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +32,12 @@ logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
 INDEX_HTML = STATIC_DIR / "index.html"
 
+# How long an arb stays flagged "NEW" after we first observe it.
+NEW_BADGE_TTL = timedelta(seconds=120)
+# How long we keep an arb in our seen-set after it disappears (so a quick
+# blip doesn't re-flag it as new on the next scan).
+SEEN_RETENTION = timedelta(minutes=10)
+
 
 class DashboardState:
     """Holds the most recent scan result + adapter health for the API endpoint."""
@@ -42,6 +48,22 @@ class DashboardState:
         self.last_started_at: datetime | None = None
         self.last_finished_at: datetime | None = None
         self.scan_count: int = 0
+        # arb_id → datetime first observed in any scan
+        self.first_seen: dict[str, datetime] = {}
+
+    def record_seen(self, result: ScanResult) -> None:
+        """Stamp `first_seen` for every arb in the latest scan; prune stale ids."""
+        now = datetime.now(UTC)
+        for op in result.opps:
+            self.first_seen.setdefault(op.arb_id, now)
+        # Prune ids we haven't seen in a while to keep the dict bounded.
+        live_ids = {op.arb_id for op in result.opps}
+        cutoff = now - SEEN_RETENTION
+        self.first_seen = {
+            arb_id: ts
+            for arb_id, ts in self.first_seen.items()
+            if arb_id in live_ids or ts > cutoff
+        }
 
     def to_dict(self, settings: Settings) -> dict[str, Any]:
         result = self.last_result
@@ -53,6 +75,7 @@ class DashboardState:
                 "scan_count": self.scan_count,
                 "settings": _settings_dict(settings),
             }
+        now = datetime.now(UTC)
         return {
             "ready": True,
             "last_error": self.last_error,
@@ -66,31 +89,36 @@ class DashboardState:
             "per_adapter": [
                 {"venue": v, **info} for v, info in result.per_adapter.items()
             ],
-            "opps": [
-                {
-                    "domain": op.domain,
-                    "title_a": op.title_a,
-                    "title_b": op.title_b,
-                    "venue_a": op.venue_a,
-                    "venue_b": op.venue_b,
-                    "side_a": op.side_a,
-                    "side_b": op.side_b,
-                    "odds_a": op.odds_a,
-                    "odds_b": op.odds_b,
-                    "p_a": op.p_a,
-                    "p_b": op.p_b,
-                    "overround": op.overround,
-                    "roi": op.roi,
-                    "stake_a": op.stake_a,
-                    "stake_b": op.stake_b,
-                    "payout": op.payout,
-                    "liquidity_usd": op.liquidity_usd,
-                    "start_time": _isoformat(op.start_time),
-                    "url_a": op.url_a,
-                    "url_b": op.url_b,
-                }
-                for op in result.opps
-            ],
+            "opps": [self._opp_dict(op, now) for op in result.opps],
+        }
+
+    def _opp_dict(self, op: Any, now: datetime) -> dict[str, Any]:
+        first_seen = self.first_seen.get(op.arb_id)
+        is_new = first_seen is not None and (now - first_seen) <= NEW_BADGE_TTL
+        return {
+            "arb_id": op.arb_id,
+            "domain": op.domain,
+            "title_a": op.title_a,
+            "title_b": op.title_b,
+            "venue_a": op.venue_a,
+            "venue_b": op.venue_b,
+            "side_a": op.side_a,
+            "side_b": op.side_b,
+            "odds_a": op.odds_a,
+            "odds_b": op.odds_b,
+            "p_a": op.p_a,
+            "p_b": op.p_b,
+            "overround": op.overround,
+            "roi": op.roi,
+            "stake_a": op.stake_a,
+            "stake_b": op.stake_b,
+            "payout": op.payout,
+            "liquidity_usd": op.liquidity_usd,
+            "start_time": _isoformat(op.start_time),
+            "url_a": op.url_a,
+            "url_b": op.url_b,
+            "is_new": is_new,
+            "first_seen_at": _isoformat(first_seen),
         }
 
 
@@ -125,6 +153,7 @@ async def _scanner_loop(state: DashboardState, settings: Settings, stop: asyncio
             try:
                 result = await scan_once(client, settings)
                 state.last_result = result
+                state.record_seen(result)
                 state.last_error = None
             except Exception as exc:
                 logger.exception("scan_once failed in background loop")

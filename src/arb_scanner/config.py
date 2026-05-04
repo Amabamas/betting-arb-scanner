@@ -18,7 +18,6 @@ class Settings(BaseSettings):
     cloudbet_api_key: str | None = None
     ps3838_username: str | None = None
     ps3838_password: str | None = None
-    overtime_api_key: str | None = None
 
     # Scanner config
     scanner_venues: str = ""  # csv; empty = all

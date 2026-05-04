@@ -12,15 +12,13 @@ and renders a sortable Rich table in the terminal.
 | Polymarket   | prediction | none                         | working (Gamma API, ~380 markets)          |
 | Limitless    | prediction | none                         | working (~170 markets)                     |
 | Azuro        | sport      | none (subgraph)              | working (~200 prematch games)              |
-| SX Bet       | sport+pred | none                         | working (no makers active right now)       |
-| Kalshi       | prediction | RSA-PSS signed (env keys)    | implemented, needs key+private PEM         |
-| Cloudbet     | sport      | `CLOUDBET_API_KEY`           | implemented, needs affiliate key           |
+| SX Bet       | sport+pred | none                         | working (orderbook often thin / empty)     |
+| Kalshi       | prediction | RSA-PSS signed (env keys)    | working (US-IP only; needs key+PEM)        |
+| Cloudbet     | sport      | `CLOUDBET_API_KEY`           | working (affiliate JWT; market list is gated) |
 | PS3838       | sport      | `PS3838_USERNAME/PASSWORD`   | implemented, needs funded account          |
-| Overtime     | sport      | `OVERTIME_API_KEY` (gated)   | implemented, needs partner-issued key      |
 | Zeitgeist    | prediction | none (Subsquid GraphQL)      | best-effort (LMSR pool prices not derived) |
 | Drift BET    | prediction | Solana SDK + DLOB            | stub (data API doesn't expose live prices) |
-| Polkamarkets | prediction | EVM RPC                      | stub                                       |
-| Monaco       | sport      | wallet-signed JWT            | stub                                       |
+| BetDEX       | sport      | wallet-signed JWT            | stub (Monaco Protocol — no public read API)|
 
 Adapters with missing credentials silently skip themselves; the scanner runs with
 whatever subset is available.

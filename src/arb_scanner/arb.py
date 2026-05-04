@@ -122,6 +122,8 @@ def find_arbs_for_pair(
                 title_b=market_b.title,
                 venue_a=market_a.venue,
                 venue_b=market_b.venue,
+                market_id_a=market_a.venue_market_id,
+                market_id_b=market_b.venue_market_id,
                 side_a=side_a.name,
                 side_b=side_b.name,
                 odds_a=side_a.decimal_odds,

@@ -100,12 +100,25 @@ class SxBetAdapter(Adapter):
             if not rows:
                 return None
             row = rows[0]
-            try:
-                # percentageOdds in /orders/odds/best is TAKER probability scaled by 1e20.
-                p_one_taker = int(row["outcomeOnePercentageOdds"]) / SCALE
-                p_two_taker = int(row["outcomeTwoPercentageOdds"]) / SCALE
-            except (KeyError, TypeError, ValueError):
+            # Current API returns nested: outcomeOne.percentageOdds (string-int) /
+            # outcomeTwo.percentageOdds. Older shape was flat
+            # outcomeOnePercentageOdds — accept both for forward-compat. The
+            # value is the *maker's* percentage scaled by 1e20; taker's
+            # probability on the SAME side is `1 - maker / 1e20`.
+            o1 = row.get("outcomeOne") if isinstance(row.get("outcomeOne"), dict) else None
+            o2 = row.get("outcomeTwo") if isinstance(row.get("outcomeTwo"), dict) else None
+            raw_one = (o1 or {}).get("percentageOdds") if o1 else row.get("outcomeOnePercentageOdds")
+            raw_two = (o2 or {}).get("percentageOdds") if o2 else row.get("outcomeTwoPercentageOdds")
+            if raw_one is None or raw_two is None:
                 return None
+            try:
+                maker_one = int(raw_one) / SCALE
+                maker_two = int(raw_two) / SCALE
+            except (TypeError, ValueError):
+                return None
+            # Maker on side 1 = taker on side 2, and vice versa.
+            p_one_taker = 1.0 - maker_two
+            p_two_taker = 1.0 - maker_one
             return {"outcome_one_prob": p_one_taker, "outcome_two_prob": p_two_taker}
         except Exception as e:
             logger.debug("sxbet best-odds %s error: %s", market_hash[:10], e)

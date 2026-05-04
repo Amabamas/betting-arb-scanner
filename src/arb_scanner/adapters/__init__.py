@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from .azuro import AzuroAdapter
 from .base import Adapter
+from .betdex import BetdexAdapter
 from .cloudbet import CloudbetAdapter
 from .drift import DriftBetAdapter
 from .kalshi import KalshiAdapter
 from .limitless import LimitlessAdapter
-from .monaco import MonacoAdapter
-from .overtime import OvertimeAdapter
-from .polkamarkets import PolkamarketsAdapter
 from .polymarket import PolymarketAdapter
 from .ps3838 import PS3838Adapter
 from .sxbet import SxBetAdapter
@@ -25,10 +23,8 @@ ALL_ADAPTERS: list[type[Adapter]] = [
     AzuroAdapter,
     CloudbetAdapter,
     PS3838Adapter,
-    OvertimeAdapter,
     ZeitgeistAdapter,
-    PolkamarketsAdapter,
-    MonacoAdapter,
+    BetdexAdapter,
 ]
 
 __all__ = ["ALL_ADAPTERS", "Adapter"]

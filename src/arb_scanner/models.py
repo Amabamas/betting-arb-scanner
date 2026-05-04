@@ -47,6 +47,8 @@ class ArbOpportunity(BaseModel):
     title_b: str
     venue_a: str
     venue_b: str
+    market_id_a: str = ""  # adapter-local market id on venue A
+    market_id_b: str = ""  # adapter-local market id on venue B
     side_a: str  # outcome name on venue A
     side_b: str  # opposing outcome on venue B
     odds_a: float  # decimal odds
@@ -63,3 +65,17 @@ class ArbOpportunity(BaseModel):
     start_time: datetime | None
     url_a: str | None = None
     url_b: str | None = None
+
+    @property
+    def arb_id(self) -> str:
+        """Stable identity for this arb pair across scans.
+
+        Hashed over the venues, market ids, and sides — *order-invariant* so
+        swapping the A/B legs (which can happen scan-to-scan based on title
+        ordering inside a group) doesn't change the id. Used by the dashboard
+        to flag freshly-discovered arbs.
+        """
+        leg_a = (self.venue_a, self.market_id_a, self.side_a.lower())
+        leg_b = (self.venue_b, self.market_id_b, self.side_b.lower())
+        first, second = sorted([leg_a, leg_b])
+        return "|".join([*first, *second])
