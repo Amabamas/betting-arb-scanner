@@ -53,8 +53,24 @@ class PS3838Adapter(Adapter):
             timeout=15.0,
         )
         # Auth / permission failures: surface to the adapter status panel
-        # instead of silently returning 0 markets.
+        # instead of silently returning 0 markets. PS3838 returns useful
+        # JSON error codes (e.g. NO_API_ACCESS = account exists but API
+        # access not enabled, distinct from bad credentials), so try to
+        # propagate them verbatim.
         if r.status_code in (401, 403):
+            try:
+                err = r.json()
+                code = err.get("code") if isinstance(err, dict) else None
+                msg = err.get("message") if isinstance(err, dict) else None
+            except ValueError:
+                code, msg = None, None
+            if code == "NO_API_ACCESS":
+                raise RuntimeError(
+                    "ps3838 NO_API_ACCESS — account exists but API access is not enabled "
+                    "(fund the account or contact ps3838 support to request API access)"
+                )
+            if code:
+                raise RuntimeError(f"ps3838 {code} ({r.status_code}): {msg or ''}".strip())
             raise RuntimeError(
                 f"ps3838 auth failed ({r.status_code}) — check PS3838_USERNAME/PASSWORD"
             )
