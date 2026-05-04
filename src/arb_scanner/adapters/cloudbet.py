@@ -6,6 +6,7 @@ We pull a configurable set of sports → competitions → events with prices.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Literal
@@ -19,6 +20,27 @@ BASE = "https://sports-api.cloudbet.com/pub/v2/odds"
 
 # Limit the universe to most-liquid sports for the PoC.
 DEFAULT_SPORTS = ["soccer", "basketball", "tennis", "american-football", "ice-hockey"]
+
+# Cloudbet market keys are camelCase, e.g. `soccer.matchOdds`,
+# `basketball.moneyline`, `baseball.moneyline`. The previous snake_case filter
+# (`.match_odds`) matched nothing for soccer/hockey, which is why arbs were
+# essentially limited to basketball/baseball. Match suffix case-insensitively
+# and accept both stylings + the common 2-way aliases.
+_MAIN_MARKET_SUFFIXES = (
+    "matchodds",  # soccer / hockey 1X2
+    "match_odds",  # snake-case fallback
+    "moneyline",  # NBA / MLB / NFL 2-way
+    "matchwinner",
+    "match_winner",
+    "winner",  # sport-agnostic 2-way alias
+    "drawnobet",
+    "draw_no_bet",  # 1X2 collapsed to 2-way
+)
+
+
+def _is_main_market(market_key: str) -> bool:
+    suffix = market_key.rsplit(".", 1)[-1].lower()
+    return suffix in _MAIN_MARKET_SUFFIXES
 
 
 class CloudbetAdapter(Adapter):
@@ -73,7 +95,10 @@ class CloudbetAdapter(Adapter):
                 event_count = comp.get("eventCount") or 0
                 if key and event_count > 0:
                     keys.append(key)
-        return keys[:10]  # cap per sport
+        # Cap so a single sport can't blow up runtime; 30 is enough to cover
+        # the major leagues per sport (top European football tiers, NBA + EuroLeague,
+        # ATP/WTA majors, NFL/NCAAF, NHL + KHL).
+        return keys[:30]
 
     async def _competition_markets(self, comp_key: str) -> list[NormalizedMarket]:
         out: list[NormalizedMarket] = []
@@ -127,21 +152,25 @@ class CloudbetAdapter(Adapter):
             for market_key, market in markets_dict.items():
                 if not isinstance(market, dict):
                     continue
-                # Pull main 1X2 / moneyline markets. Cloudbet keys we care about:
-                #   "{sport}.match_odds" — 3-way 1X2 in soccer/hockey
-                #   "{sport}.moneyline"  — 2-way moneyline in NBA/NFL/MLB
-                #   "{sport}.winner"     — newer 2-way alias on some sports
-                if not (
-                    market_key.endswith(".match_odds")
-                    or market_key.endswith(".moneyline")
-                    or market_key.endswith(".winner")
-                    or "moneyline" in market_key
-                ):
+                # Pull main 1X2 / moneyline markets only. See _MAIN_MARKET_SUFFIXES
+                # for the full list — Cloudbet uses camelCase keys
+                # (`soccer.matchOdds`, NOT `soccer.match_odds`), which the
+                # previous filter silently dropped.
+                if not _is_main_market(market_key):
                     continue
                 submarkets = market.get("submarkets") or {}
                 if not isinstance(submarkets, dict):
                     continue
-                main = submarkets.get("period=ft") or next(iter(submarkets.values()), None)
+                # Cloudbet score-types: `period=default`, `period=ft`, etc. We
+                # want the one covering the full game/match (no half / set /
+                # quarter slicing). Try the obvious aliases, then fall back to
+                # the first submarket so we never silently drop a valid market.
+                main = (
+                    submarkets.get("period=ft")
+                    or submarkets.get("period=default")
+                    or submarkets.get("period=match")
+                    or next(iter(submarkets.values()), None)
+                )
                 if not isinstance(main, dict):
                     continue
                 selections = main.get("selections") or []
@@ -196,6 +225,7 @@ class CloudbetAdapter(Adapter):
         all_markets: list[NormalizedMarket] = []
         first_error: Exception | None = None
         sports_with_comps = 0
+        all_comps: list[str] = []
         for sport in DEFAULT_SPORTS:
             try:
                 comps = await self._competitions(sport)
@@ -205,8 +235,26 @@ class CloudbetAdapter(Adapter):
                 continue
             if comps:
                 sports_with_comps += 1
-            for comp in comps:
-                all_markets.extend(await self._competition_markets(comp))
+            all_comps.extend(comps)
+
+        # Cloudbet competition pages are independent — fetching them in
+        # parallel cuts the previous ~30s of sequential I/O down to a few
+        # seconds. Cap concurrency to be polite with the rate limiter.
+        sem = asyncio.Semaphore(8)
+
+        async def _bounded(comp: str) -> list[NormalizedMarket]:
+            async with sem:
+                return await self._competition_markets(comp)
+
+        if all_comps:
+            for batch in await asyncio.gather(
+                *(_bounded(c) for c in all_comps), return_exceptions=True
+            ):
+                if isinstance(batch, BaseException):
+                    if first_error is None and isinstance(batch, Exception):
+                        first_error = batch
+                    continue
+                all_markets.extend(batch)
         if not all_markets:
             if first_error is not None:
                 # Surface the first sport's error so the dashboard shows a red dot

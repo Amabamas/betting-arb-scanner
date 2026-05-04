@@ -135,6 +135,19 @@ def _parse_market(m: dict, event: dict) -> NormalizedMarket | None:
     liq_dollars = float(m.get("liquidity_dollars") or 0.0)
     category = str(event.get("category") or "").lower()
 
+    # Kalshi web doesn't have per-market URLs — only per-event. The previous
+    # `/markets/{market_ticker}` pattern produced 404s for sport markets like
+    # KXUCLGAME-26MAY05ARSATM-ATM. The /events/{event_ticker} path resolves
+    # for both sports and prediction events. Fall back to the series page if
+    # the event ticker is missing.
+    event_ticker = str(event.get("event_ticker") or m.get("event_ticker") or "").lower()
+    series_ticker = str(event.get("series_ticker") or "").lower()
+    url: str | None = None
+    if event_ticker:
+        url = f"https://kalshi.com/events/{event_ticker}"
+    elif series_ticker:
+        url = f"https://kalshi.com/series/{series_ticker}"
+
     return NormalizedMarket(
         venue="kalshi",
         venue_market_id=ticker,
@@ -148,7 +161,7 @@ def _parse_market(m: dict, event: dict) -> NormalizedMarket | None:
         start_time=start_time,
         liquidity_usd=liq_dollars,
         tags=[category] if category else [],
-        url=f"https://kalshi.com/markets/{ticker.lower()}" if ticker else None,
+        url=url,
     )
 
 
