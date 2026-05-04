@@ -29,9 +29,10 @@ _TOTALS_RE = re.compile(
     r"strikeouts?|hits?|runs?|threes?|three\s*pointers?|tries|fouls?)\b",
     re.IGNORECASE,
 )
-# Markets that aren't full-event yes/no — e.g. "Player X to score a goal" — are
-# legitimate Limitless contracts but conflate badly with moneyline markets that
-# share team names. Mark them `kind="other"` so the matcher leaves them alone.
+# Markets that aren't full-event yes/no — e.g. "Player X to score a goal",
+# "match to go to extra time", "Y to start" — are legitimate Limitless
+# contracts but conflate badly with moneyline markets that share team
+# names. Mark them `kind="other"` so the matcher leaves them alone.
 _PROP_HINTS = (
     "to score",
     "first goal",
@@ -42,6 +43,23 @@ _PROP_HINTS = (
     "to assist",
     "hat-trick",
     "hat trick",
+    "extra time",
+    "penalty",
+    "to start",
+    "to make",
+    "to complete",
+    "to have more",
+    "diving save",
+    "park the bus",
+    "possession",
+    "yellow card",
+    "red card",
+    "clean sheet",
+    "both teams to score",
+    "btts",
+    "to win penalty",
+    "shots on target",
+    "sot",
 )
 # Most Limitless event-level markets read "Team A vs Team B: …?" — those are
 # moneyline-style yes/no. We want them paired only with moneyline markets.
@@ -108,6 +126,24 @@ def _extract_prices(prices: object) -> tuple[float, float] | None:
     return yp, np_
 
 
+def _is_uninitiated(yp: float, np_: float, volume: float) -> bool:
+    """Detect Limitless markets that are showing placeholder 50/50 odds.
+
+    Limitless returns `[50, 50]` (or `[0.5, 0.5]`) for AMM markets that
+    have not yet had a single trade. These conflate badly with active
+    Kalshi/Polymarket markets covering the same teams and produce
+    impressive-looking but fake arbs (the most common one we saw was
+    "Arsenal vs Atletico extra time" @ 50/50 paired with Kalshi's
+    18% / 82% Atletico-to-win line, "ROI" 47%).
+
+    We flag them as uninitiated when:
+      - both legs sit within ±0.03 of 0.5 (overround ≈ 0%, no real edge), AND
+      - the market reports zero volume so far.
+    """
+    near_fifty = abs(yp - 0.5) < 0.03 and abs(np_ - 0.5) < 0.03
+    return near_fifty and volume <= 0.0
+
+
 class LimitlessAdapter(Adapter):
     id = "limitless"
     domains = ("prediction",)
@@ -148,11 +184,17 @@ class LimitlessAdapter(Adapter):
                 yp, np_ = prices
 
                 start_time = _parse_expiration(m.get("expirationDate") or m.get("deadline"))
-                liquidity = 0.0
-                vol = m.get("volumeFormatted") or m.get("volume")
-                if isinstance(vol, (int, float)):
-                    # `volume` is in raw token units; treat as USD-ish for sorting only.
-                    liquidity = float(vol) / 1e6
+                # `volumeFormatted` is already in human units (USDC). Fall
+                # back to the raw `volume` field (atomic units, 1e6 = 1 USDC).
+                vol_raw = m.get("volumeFormatted")
+                if isinstance(vol_raw, (int, float)):
+                    volume_usd = float(vol_raw)
+                else:
+                    raw = m.get("volume")
+                    volume_usd = float(raw) / 1e6 if isinstance(raw, (int, float)) else 0.0
+                if _is_uninitiated(yp, np_, volume_usd):
+                    continue
+                liquidity = volume_usd
                 slug = m.get("slug") or m.get("stableSlug")
                 url = f"https://limitless.exchange/markets/{slug}" if slug else None
 
