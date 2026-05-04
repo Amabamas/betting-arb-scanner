@@ -99,7 +99,19 @@ class PolymarketAdapter(Adapter):
                 tags_field = m.get("tags") or []
                 if isinstance(tags_field, list):
                     tags = [str(t.get("label", t)) if isinstance(t, dict) else str(t) for t in tags_field]
-                slug = m.get("slug")
+                # Polymarket groups markets under a parent "event" page. The
+                # canonical URL is /event/<event.slug>, NOT /event/<market.slug>
+                # — the latter sometimes resolves but often 404s for binary
+                # subgroups (e.g. "Will X be the next Y?" lives under an
+                # event-level "Who will be the next Y?" page). Prefer the
+                # event slug; fall back to the market slug only if missing.
+                events = m.get("events")
+                event_slug = None
+                if isinstance(events, list) and events:
+                    first = events[0]
+                    if isinstance(first, dict):
+                        event_slug = first.get("slug") or None
+                slug = event_slug or m.get("slug")
                 url = f"https://polymarket.com/event/{slug}" if slug else None
 
                 markets.append(
