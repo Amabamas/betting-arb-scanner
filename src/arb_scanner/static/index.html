@@ -154,15 +154,22 @@
                 <h2 class="text-xs uppercase tracking-wider text-white/40 mb-3">Adapters</h2>
                 <ul class="space-y-1.5">
                     <template x-for="a in state?.per_adapter ?? []" :key="a.venue">
-                        <li class="flex items-center justify-between text-sm">
-                            <span class="flex items-center gap-2">
-                                <span
-                                    class="w-1.5 h-1.5 rounded-full"
-                                    :class="adapterDot(a)"
-                                ></span>
-                                <span class="font-mono" x-text="a.venue"></span>
-                            </span>
-                            <span class="text-white/50 font-mono text-xs" x-text="a.count + ' / ' + a.elapsed_s + 's'"></span>
+                        <li>
+                            <div class="flex items-center justify-between text-sm">
+                                <span class="flex items-center gap-2">
+                                    <span
+                                        class="w-1.5 h-1.5 rounded-full"
+                                        :class="adapterDot(a)"
+                                    ></span>
+                                    <span class="font-mono" x-text="a.venue"></span>
+                                </span>
+                                <span class="text-white/50 font-mono text-xs" x-text="a.count + ' / ' + a.elapsed_s + 's'"></span>
+                            </div>
+                            <div
+                                x-show="a.error"
+                                class="ml-3.5 mt-0.5 text-[10px] text-rose-300/80 font-mono break-words"
+                                x-text="a.error"
+                            ></div>
                         </li>
                     </template>
                     <li
@@ -231,9 +238,11 @@
                         x-model.number="filters.topN"
                         class="mt-1 w-full bg-black/30 border border-white/10 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:border-emerald-400/50"
                     >
-                        <template x-for="n in [10, 25, 50, 100, 9999]" :key="n">
-                            <option :value="n" x-text="n === 9999 ? 'all' : n"></option>
-                        </template>
+                        <option value="10">10</option>
+                        <option value="25">25</option>
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                        <option value="9999">all</option>
                     </select>
                 </label>
 
@@ -562,9 +571,11 @@
                     arr = arr.filter((o) => o.roi * 100 <= this.filters.maxRoi);
                     arr = arr.filter((o) => this.filters.domains.includes(o.domain));
                     if (this.filters.venues.length) {
+                        // Both legs must be on a checked venue. Otherwise unticking
+                        // one venue still leaves arbs that pair it with a checked one.
                         arr = arr.filter(
                             (o) =>
-                                this.filters.venues.includes(o.venue_a) ||
+                                this.filters.venues.includes(o.venue_a) &&
                                 this.filters.venues.includes(o.venue_b)
                         );
                     }
